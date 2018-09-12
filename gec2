@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+. ./.bash_colors
+if ! [ -f ~/.gec2 ]; then
+	clr_red "~/.gec2 configuration file not found"
+	exit 1
+fi
+. ~/.gec2
+
+# exit if program at $1 doesn't exist
+check_command() {
+	if ! [ -x "$(command -v $1)" ]; then
+		clr_red "$1 command not found!"
+		exit 1
+	fi
+}
+
+check_command "dialog"
+check_command "aws"
+check_command "jq"
+
+JSON_AWS_OUTPUT=$(aws ec2 describe-instances --filters "Name=instance-state-name,Values=running")
+
+declare -a INSTANCES
+declare -a MENU_OPTIONS
+
+ix=3
+lx=2
+
+MENU_OPTIONS[1]=1
+MENU_OPTIONS[2]="INSTANCE ID|TAG NAME|PUBLIC IP|STATE"
+
+# loop through instances
+for i in $(echo $JSON_AWS_OUTPUT | jq -r '.Reservations[].Instances[] | @base64'); do
+	_jq() {
+		echo ${i} | base64 --decode | jq -r "${1}"
+	}
+	
+	INSTANCE_ID="$(_jq '.InstanceId')"
+	KEYNAME="$(_jq '.KeyName')"
+	PVT_IP="$(_jq '.PrivateIpAddress')"
+	PUBLIC_IP="$(_jq '.PublicIpAddress')"
+	STATE="$(_jq '.State.Name')"
+	TAGS=$(_jq 'select(.Tags != null) | .Tags[] | select(.Key == "Name")')
+
+	# if we don't have any tags, use placeholder
+	if [[ ! -z "$TAGS" ]]; then
+		TAG_NAME="$(echo "$TAGS" | jq -r '.Value')"
+	else
+		TAG_NAME="---"
+	fi
+
+	INSTANCES[$lx]="$INSTANCE_ID|$KEYNAME|$PVT_IP|$PUBLIC_IP"
+	MENU_OPTIONS[ $ix ]=$lx
+	(( lx++ ))
+	MENU_OPTIONS[ ($ix + 1) ]="$INSTANCE_ID|$TAG_NAME|$PUBLIC_IP|$STATE"
+	(( ix=(ix+2) ))
+done
+
+#Define parameters for menu
+TERMINAL=$(tty) #Gather current terminal session for appropriate redirection
+HEIGHT=20
+WIDTH=76
+CHOICE_HEIGHT=16
+BACKTITLE="AWS EC2 Bash Connector"
+TITLE="AWS EC2 Instances"
+MENU="Choose an instance to connect to:"
+ 
+CHOICE="1"
+while [[ $CHOICE = "1" ]]
+do
+ CHOICE=$(dialog --clear \
+                 --backtitle "$BACKTITLE" \
+		 --column-separator "|" \
+                 --title "$TITLE" \
+                 --menu "$MENU" \
+                 $HEIGHT $WIDTH $CHOICE_HEIGHT \
+                 "${MENU_OPTIONS[@]}" \
+                 2>&1 >$TERMINAL)
+
+done
+if [[ -z $CHOICE ]]; then
+	exit
+fi
+
+IFS='|' read -ra ARR <<< "${INSTANCES[$CHOICE]}"
+
+INSTANCE_ID=${ARR[0]}
+KEYNAME=${ARR[1]}
+PVT_IP=${ARR[2]}
+PUBLIC_IP=${ARR[3]}
+KEYFILE="${KEYS[$KEYNAME]}"
+if [[ -z "$KEYFILE" ]]; then
+	clr_red "Key file for key $KEYNAME cannot be found"
+	exit 1
+fi
+if [[ ! -z "${EXTRA_SSH_SETTINGS[$INSTANCE_ID]}" ]]; then
+	ADD_SSH_SETTINGS="${EXTRA_SSH_SETTINGS[$INSTANCE_ID]}"
+else
+	ADD_SSH_SETTINGS=""
+fi
+
+if [[ -z "$SSH_TUNNEL" ]]; then
+	ssh -i $KEYFILE $ADD_SSH_SETTINGS ec2-user@$PVT_IP
+else
+	$SSH_TUNNEL "ssh -i $KEYFILE $ADD_SSH_SETTINGS ec2-user@$PVT_IP"
+fi

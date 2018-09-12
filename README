@@ -1,0 +1,22 @@
+This is a bash script which uses dialog to connect to running Amazon EC2 servers
+
+See gec2.config for more info
+
+Requirements:
+
+- dialog
+- jq
+- bash >= 4
+- aws-cli properly set up
+
+On macOS:
+
+brew install dialog 
+brew install jq 
+brew install bash
+
+For aws-cli, https://docs.aws.amazon.com/cli/latest/userguide/installing.html . Make sure it's properly configured: aws configure
+
+Once requirements are met and the ~/.gec2 config file is created, you can copy the gec2 script file to a folder in your PATH.
+
+.bash_colors is from https://github.com/mercuriev/bash_colors which is licensed under MIT. See bash_colors_LICENSE
